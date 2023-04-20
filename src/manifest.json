@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Ledgstr - Chrome",
+  "description": "Chrome extension for Ledgstr Nano App",
+  "options_page": "options.html",
+  "permissions": [
+    "storage"
+  ],
+  "background": {
+    "service_worker": "background.bundle.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon-16.png",
+      "32": "icon-32.png",
+      "64": "icon-64.png",
+      "128": "icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icon-16.png",
+    "32": "icon-32.png",
+    "64": "icon-64.png",
+    "128": "icon-128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "contentScript.bundle.js"
+      ]
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "nostrProvider.bundle.js"
+      ],
+      "matches": ["https://*/*", "http://localhost:*/*"]
+    }
+  ]
+}
