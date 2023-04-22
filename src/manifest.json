@@ -3,9 +3,7 @@
   "name": "Ledgstr - Chrome",
   "description": "Chrome extension for Ledgstr Nano App",
   "options_page": "options.html",
-  "permissions": [
-    "storage"
-  ],
+  "permissions": ["storage"],
   "background": {
     "service_worker": "background.bundle.js"
   },
@@ -27,16 +25,12 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": [
-        "contentScript.bundle.js"
-      ]
+      "js": ["contentScript.bundle.js"]
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": [
-        "nostrProvider.bundle.js"
-      ],
+      "resources": ["nostrProvider.bundle.js"],
       "matches": ["https://*/*", "http://localhost:*/*"]
     }
   ]

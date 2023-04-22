@@ -62,7 +62,7 @@ const Setup: React.FC = () => {
   const saveSettings = async function (publish: boolean) {
     const appState: AppState = {
       initStatus: InitStatus.Initialized,
-      signingValidation: state.almostDoneStep?.requireValidation ?? false,
+      confirmSigningOnLedger: state.almostDoneStep?.requireValidation ?? false,
       deviceMode: 'HID',
     };
     await chrome.storage.local.set(appState);

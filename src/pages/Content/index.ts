@@ -1,5 +1,6 @@
 import TransportWebHID from '@ledgerhq/hw-transport-webhid';
 import {
+  AppState,
   IContentScriptMessage,
   IProviderRequestDataEvent,
   IResponseDataEvent,
@@ -78,35 +79,21 @@ const handleMessage = async (
         var transport = await TransportWebHID.create();
         transport.close();
 
-        // const timeOut = setTimeout(() => {
-        //   chrome.runtime.sendMessage(<IContentScriptMessage>{
-        //     id: message.data.id,
-        //     type: 'open',
-        //     extension: 'ledgstr',
-        //   });
-        // }, 2000);
+        const appState: AppState =
+          (await chrome.storage.local.get()) as AppState;
 
-        var result = await openAndSign(message.data.params.event, async (s) => {
-          await chrome.runtime.sendMessage(<IContentScriptMessage>{
-            id: message.data.id,
-            type: 'info',
-            extension: 'ledgstr',
-            params: s,
-          });
-        });
-
-        // clearTimeout(timeOut);
-
-        // if (typeof result === 'number') {
-        //   await chrome.runtime.sendMessage(<IContentScriptMessage>{
-        //     id: message.data.id,
-        //     type: 'open',
-        //     extension: 'ledgstr',
-        //     params: result,
-        //   });
-
-        //   throw new Error('Unable o get the pubkey, check your device');
-        // }
+        var result = await openAndSign(
+          message.data.params.event,
+          appState.confirmSigningOnLedger,
+          async (s) => {
+            await chrome.runtime.sendMessage(<IContentScriptMessage>{
+              id: message.data.id,
+              type: 'info',
+              extension: 'ledgstr',
+              params: s,
+            });
+          }
+        );
 
         return result;
       }

@@ -1,17 +1,7 @@
 import Transport from '@ledgerhq/hw-transport';
 import TransportWebHID from '@ledgerhq/hw-transport-webhid';
-import {
-  TransportError,
-  LockedDeviceError,
-  StatusCodes,
-} from '@ledgerhq/errors';
-import {
-  Event,
-  UnsignedEvent,
-  getEventHash,
-  nip19,
-  validateEvent,
-} from 'nostr-tools';
+import { LockedDeviceError } from '@ledgerhq/errors';
+import { Event, getEventHash, nip19, validateEvent } from 'nostr-tools';
 
 export enum InitStatus {
   NotInitialized,
@@ -21,7 +11,7 @@ export enum InitStatus {
 export interface AppState {
   initStatus: InitStatus;
   deviceMode: 'HID';
-  signingValidation: boolean;
+  confirmSigningOnLedger: boolean;
 }
 
 export async function getInitStatus(): Promise<InitStatus> {
@@ -112,7 +102,6 @@ export async function managerLedgerConnection<T>(
 
     onProgress(AppStatus.Loading);
 
-    // await quitCurrentApp(transport);
     var currentApp = await getCurrentApp(transport);
     if (currentApp.name != 'Ledgstr') {
       if (currentApp.name != 'BOLOS') {
@@ -152,9 +141,7 @@ export async function openAndGetPublicKey(
   progress?: (arg0: string) => void,
   bech32: boolean = false
 ): Promise<string | LedgerErrors> {
-  var pubkey: string | LedgerErrors = '';
-
-  var connection = await managerLedgerConnection(
+  var result = await managerLedgerConnection(
     async (s: AppStatus) => {
       progress?.(s.toString());
     },
@@ -163,14 +150,18 @@ export async function openAndGetPublicKey(
     }
   );
 
-  return connection;
+  return result;
 }
 
-export async function signHash(transport: TransportWebHID, hex: string) {
+export async function signHash(
+  transport: TransportWebHID,
+  hex: string,
+  confirmSigningOnLedger: boolean
+): Promise<string> {
   var result = await transport.send(
     0xe0,
     0x07,
-    0x00,
+    confirmSigningOnLedger ? 0x01 : 0x00,
     0x00,
     Buffer.from(hex, 'hex')
   );
@@ -179,6 +170,7 @@ export async function signHash(transport: TransportWebHID, hex: string) {
 
 export async function openAndSign(
   event: Event,
+  confirmSigningOnLedger: boolean,
   progress?: (arg0: string) => void
 ): Promise<string | LedgerErrors> {
   var connection = await managerLedgerConnection(
@@ -192,7 +184,7 @@ export async function openAndSign(
       if (!event.id) event.id = getEventHash(event);
       if (!validateEvent(event)) return { error: { message: 'invalid event' } };
 
-      event.sig = await signHash(t, event.id);
+      event.sig = await signHash(t, event.id, confirmSigningOnLedger);
       return event;
     }
   );

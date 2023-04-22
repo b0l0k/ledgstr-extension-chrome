@@ -7,7 +7,6 @@ import {
   getPublicKey,
   managerLedgerConnection,
 } from '../../helpers/model';
-import TransportWebHID from '@ledgerhq/hw-transport-webhid';
 import {
   TransportError,
   LockedDeviceError,
@@ -62,6 +61,11 @@ const Popup = () => {
       );
     } else if (
       state.initStatus === InitStatus.Initialized &&
+      state.appStatus === AppStatus.NotConnected
+    ) {
+      return <>Please connect your Ledger...</>;
+    } else if (
+      state.initStatus === InitStatus.Initialized &&
       state.appStatus === AppStatus.Loading
     ) {
       return <>Connecting to your Ledger...</>;
@@ -89,7 +93,7 @@ const Popup = () => {
               className="App-link"
               onClick={() =>
                 chrome.tabs.create({
-                  url: chrome.runtime.getURL('options.html#/setup'),
+                  url: chrome.runtime.getURL('options.html'),
                 })
               }
             >
@@ -100,7 +104,13 @@ const Popup = () => {
       );
     }
 
-    return <>Unknown state</>;
+    return (
+      <>
+        Unknown state
+        <br />
+        InitStatus: {state.initStatus} <br /> AppStatus: {state.appStatus}{' '}
+      </>
+    );
   };
 
   const display = async function () {
@@ -121,23 +131,10 @@ const Popup = () => {
         async (s) => {
           console.log('managerLedgerConnection', s);
           switch (s) {
-            case AppStatus.Loading:
-              setState({
-                ...state,
-                initStatus: InitStatus.Initialized,
-                loading: false,
-                appStatus: s,
-              });
-              break;
-            case AppStatus.NotStarted:
-              setState({
-                ...state,
-                initStatus: InitStatus.Initialized,
-                loading: false,
-                appStatus: s,
-              });
-              break;
             case AppStatus.RequireUpdate:
+            case AppStatus.Loading:
+            case AppStatus.NotConnected:
+            case AppStatus.NotStarted:
               setState({
                 ...state,
                 initStatus: InitStatus.Initialized,
