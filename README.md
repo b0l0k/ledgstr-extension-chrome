@@ -50,6 +50,12 @@ This is a basic Chrome extension compatible with NIP-07 and communicating with [
 
 <!-- GETTING STARTED -->
 
+### Client compatibility
+
+- Snort.social: ✔️
+- Coracle: ✔️
+- Iris.to: ✔️
+
 ### Prerequisites
 
 To build and use this project you need to have the following installed:
