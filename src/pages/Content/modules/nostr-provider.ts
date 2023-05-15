@@ -1,10 +1,13 @@
 import TransportWebHID from '@ledgerhq/hw-transport-webhid';
 import qs from 'qs';
 import {
+  IContentScriptMessage,
+  INostrProviderRequestType,
   IProviderRequestDataEvent,
   IResponseDataEvent,
   isResponse,
 } from '../../../helpers/model';
+import { decrypt } from 'nostr-tools/lib/nip04';
 
 declare global {
   interface Window {
@@ -14,54 +17,14 @@ declare global {
       getPublicKey(): Promise<string | null>;
       signEvent(event: string): Promise<string>;
       // getRelays(): Promise<string[]>;
-      // nip04: {
-      //   encrypt(peer: string, plaintext: string): Promise<string>;
-      //   decrypt(peer: string, ciphertext: string): Promise<string>;
-      // };
-      _call(type: string, params: any): Promise<any>;
+      nip04: {
+        encrypt(peer: string, plaintext: string): Promise<string>;
+        decrypt(peer: string, ciphertext: string): Promise<string>;
+      };
+      _call(type: INostrProviderRequestType, params: any): Promise<any>;
     };
   }
 }
-
-// export async function getPublicKey(
-//   progress?: (string) => void,
-//   bech32: boolean = false
-// ): Promise<string | LedgerErrors> {
-//   try {
-//     if ((await TransportWebHID.list()).length == 0) {
-//       return LedgerErrors.USBNotAuthorized;
-//     }
-
-//     progress = progress ?? function (s) {};
-
-//     progress('Trying to open Ledgstr app');
-
-//     var transport = await TransportWebHID.openConnected();
-//     if (transport == null) return LedgerErrors.USBNotConnected;
-
-//     await openApp(transport);
-
-//     progress('Getting the public key');
-//     var response = await transport.send(0xe0, 0x05, 0x00, 0x00);
-//     transport?.close();
-
-//     var pk = response.toString('hex').substring(4, 4 + 64);
-//     if (bech32) return nip19.npubEncode(pk);
-//     else return pk;
-//   } catch (error: any) {
-//     if (error instanceof LockedDeviceError) {
-//       return LedgerErrors.DeviceLocked;
-//     }
-//     if (error.statusCode != null) {
-//       return error.statusCode;
-//       return mapToLedgerErrors(error.statusCode);
-//     }
-
-//     return error.message;
-//   }
-
-//   return LedgerErrors.Unknown;
-// }
 
 window.nostr = {
   _requests: {},
@@ -77,7 +40,16 @@ window.nostr = {
     return await this._call('signEvent', { event });
   },
 
-  _call(type, params) {
+  nip04: {
+    async encrypt(peer: string, plaintext: string): Promise<string> {
+      return await window.nostr._call('nip04.encrypt', { peer, plaintext });
+    },
+    async decrypt(peer: string, cyphertext: string): Promise<string> {
+      return await window.nostr._call('nip04.decrypt', { peer, cyphertext });
+    },
+  },
+
+  _call(type: INostrProviderRequestType, params) {
     return new Promise((resolve, reject) => {
       let id = Math.random().toString().slice(4);
       this._requests[id] = { resolve, reject };

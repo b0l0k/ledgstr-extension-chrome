@@ -1,7 +1,8 @@
 import Transport from '@ledgerhq/hw-transport';
-import TransportWebHID from '@ledgerhq/hw-transport-webhid';
-import { LockedDeviceError } from '@ledgerhq/errors';
+import LedgerTransport from '@ledgerhq/hw-transport-webhid';
+import { LockedDeviceError, StatusCodes } from '@ledgerhq/errors';
 import { Event, getEventHash, nip19, validateEvent } from 'nostr-tools';
+import { Point } from '@noble/secp256k1';
 
 export enum InitStatus {
   NotInitialized,
@@ -46,7 +47,7 @@ export async function getPublicKey(
     0x00
   );
 
-  var pk = response.toString('hex').substring(4, 4 + 64);
+  var pk = response.toString('hex').substring(4, 4 + 64); // size(2) + '04' prefix
 
   if (format === 'bech32') return nip19.npubEncode(pk);
   else return pk;
@@ -87,17 +88,17 @@ export enum AppStatus {
 }
 
 export async function managerLedgerConnection<T>(
-  onProgress: (connectionStatus: AppStatus) => void,
-  onStarted: (transport: TransportWebHID | null) => T
+  onProgress: (connectionStatus: AppStatus) => Promise<void>,
+  onStarted: (transport: LedgerTransport | null) => Promise<T>
 ) {
-  if ((await TransportWebHID.list()).length == 0) {
+  if ((await LedgerTransport.list()).length == 0) {
     onProgress(AppStatus.NotConnected);
     return LedgerErrors.USBNotAuthorized;
   }
 
-  var transport: TransportWebHID | null = null;
+  var transport: LedgerTransport | null = null;
   try {
-    transport = await TransportWebHID.openConnected();
+    transport = await LedgerTransport.openConnected();
     if (transport === null) return LedgerErrors.USBNotConnected;
 
     onProgress(AppStatus.Loading);
@@ -121,7 +122,7 @@ export async function managerLedgerConnection<T>(
       return;
     }
 
-    return onStarted(transport);
+    return await onStarted(transport);
   } catch (error: any) {
     if (error instanceof LockedDeviceError) {
       return LedgerErrors.DeviceLocked;
@@ -145,7 +146,7 @@ export async function openAndGetPublicKey(
     async (s: AppStatus) => {
       progress?.(s.toString());
     },
-    async (t: TransportWebHID | null) => {
+    async (t: LedgerTransport | null) => {
       return await getPublicKey(t!, bech32 ? 'bech32' : 'hex');
     }
   );
@@ -154,7 +155,7 @@ export async function openAndGetPublicKey(
 }
 
 export async function signHash(
-  transport: TransportWebHID,
+  transport: LedgerTransport,
   hex: string,
   confirmSigningOnLedger: boolean
 ): Promise<string> {
@@ -177,7 +178,7 @@ export async function openAndSign(
     async (s: AppStatus) => {
       progress?.(s.toString());
     },
-    async (t: TransportWebHID | null) => {
+    async (t: LedgerTransport | null) => {
       if (t == null) return LedgerErrors.USBNotConnected;
       if (!event.pubkey) event.pubkey = await getPublicKey(t, 'hex');
       if (!event.created_at) event.created_at = Math.round(Date.now() / 1000);
@@ -189,6 +190,233 @@ export async function openAndSign(
     }
   );
   console.log('openandSign', connection);
+  return connection;
+}
+
+function chunks(buffer: Buffer, chunkSize: number, padding = true): Buffer[] {
+  assert(Buffer.isBuffer(buffer), 'Buffer is required');
+  assert(
+    !isNaN(chunkSize) && chunkSize > 0,
+    'Chunk size should be positive number'
+  );
+
+  var result = [];
+  var len = buffer.length;
+  var i = 0;
+
+  while (i < len) {
+    result.push(buffer.slice(i, (i += chunkSize)));
+  }
+
+  if (result[result.length - 1].length < chunkSize && padding) {
+    result[result.length - 1] = Buffer.concat([
+      result[result.length - 1],
+      Buffer.alloc(chunkSize - result[result.length - 1].length, 0),
+    ]);
+  }
+
+  return result;
+}
+
+function assert(cond: boolean, err: string) {
+  if (!cond) {
+    throw new Error(err);
+  }
+}
+
+function removePKCS7PaddingInBlocks(buffer: Buffer, blockSize: number) {
+  var buffers = [];
+  const blockCount = Math.ceil(buffer.length / blockSize);
+  for (let i = 0; i < blockCount; i++) {
+    const block = buffer.slice(i * blockSize, (i + 1) * blockSize);
+    const [paddingPresent, blockBuffer] = removePKCS7PaddingInBlock(block);
+    buffers.push(blockBuffer);
+    if (paddingPresent) {
+      break;
+    }
+  }
+  return Buffer.concat(buffers);
+}
+
+function removePKCS7PaddingInBlock(buffer: Buffer): [boolean, Buffer] {
+  const padding = buffer[buffer.length - 1];
+  if (padding < 1 || padding > buffer.length) {
+    return [false, buffer];
+  }
+  for (let i = buffer.length - padding; i < buffer.length; i++) {
+    if (buffer[i] !== padding) {
+      return [false, buffer];
+    }
+  }
+  return [true, buffer.slice(0, buffer.length - padding)];
+}
+
+export async function sendBulk(
+  transport: LedgerTransport,
+  ins: number,
+  buffers: Buffer[]
+) {
+  var results = [];
+  var i = 0;
+  for (const element in buffers) {
+    console.log(
+      'e0' +
+        ins.toString(16) +
+        i.toString().padStart(2, '0') +
+        (i == buffers.length - 1 ? '00' : '80') +
+        buffers[element].byteLength.toString(16) +
+        buffers[element].toString('hex')
+    );
+
+    var result = await transport.send(
+      0xe0,
+      ins,
+      i,
+      i == buffers.length - 1 ? 0x00 : 0x80,
+      buffers[element],
+      [StatusCodes.OK, 0x6100]
+    );
+
+    i++;
+
+    if (result.length == 2) continue;
+    if (result[result.length - 2] == 0x61) {
+      var pages = [result.subarray(0, result.length - 2)];
+      var page;
+      do {
+        console.log('get more data');
+        page = await transport.send(0xe0, 0xc0, 0x00, 0x00, undefined, [
+          StatusCodes.OK,
+          0x6100,
+        ]);
+        pages.push(page.subarray(0, page.length - 2));
+      } while (page[result.length - 2] == 0x61);
+
+      result = Buffer.concat(pages);
+    }
+
+    console.log(result.toString('hex'));
+    results.push(result);
+  }
+
+  return results;
+}
+
+export async function encrypt(
+  transport: LedgerTransport,
+  uncompressedPublicKey: string,
+  plaintext: string
+): Promise<string> {
+  const uncompressedPublicKeyBytes = Buffer.from(uncompressedPublicKey, 'hex');
+  const plaintextBytes = chunks(Buffer.from(plaintext, 'utf8'), 128, false);
+
+  const result = await sendBulk(
+    transport,
+    0x08,
+    [uncompressedPublicKeyBytes].concat(plaintextBytes)
+  );
+
+  if (result === undefined) throw new Error('Ledger did not return a result.');
+  if (result.length != 1)
+    throw new Error('Ledger must return only 1 data for this command.');
+
+  const contentSize = parseInt(
+    result[0].subarray(0, 4).reverse().toString('hex'),
+    16
+  );
+
+  const ivSize = result[0][4];
+  const ivResult = result[0].subarray(5, ivSize + 5);
+  const contentChunk = result[0].subarray(5 + ivSize, 5 + ivSize + contentSize);
+
+  return contentChunk.toString('base64') + '?iv=' + ivResult.toString('base64');
+}
+
+export async function decrypt(
+  transport: LedgerTransport,
+  uncompressedPublicKey: string,
+  cyphertext: string
+): Promise<string> {
+  const uncompressedPublicKeyBytes = Buffer.from(uncompressedPublicKey, 'hex');
+  const [contentB64, ivB64] = cyphertext.split('?iv=');
+
+  const ivBytes = Buffer.from(ivB64, 'base64');
+  const contentBytes = chunks(Buffer.from(contentB64, 'base64'), 128, false);
+
+  try {
+    const result = await sendBulk(
+      transport,
+      0x09,
+      [uncompressedPublicKeyBytes, ivBytes].concat(contentBytes)
+    );
+    if (result === undefined) throw new Error('Ledger did not return a result');
+    if (result.length != 1)
+      throw new Error('Ledger must return only 1 data for this command.');
+
+    const contentSize = parseInt(
+      result[0].subarray(0, 4).reverse().toString('hex'),
+      16
+    );
+
+    var plaintextBytes = removePKCS7PaddingInBlocks(
+      result[0].subarray(4, 4 + contentSize),
+      16
+    );
+
+    console.log(plaintextBytes);
+    return plaintextBytes
+      .toString('utf8')
+      .replace(/^[\s\uFEFF\xA0\0]+|[\s\uFEFF\xA0\0]+$/g, '');
+  } catch (error) {
+    return (
+      'Unable to decrypt with your Ledger. Please make sure you are using the correct key. ' +
+      error.message
+    );
+  }
+}
+
+export async function openAndEncrypt(
+  peer: string,
+  plaintext: string,
+  progress?: (arg0: string) => void
+): Promise<string | LedgerErrors> {
+  var connection = await managerLedgerConnection(
+    async (s: AppStatus) => {
+      progress?.(s.toString());
+    },
+    async (t: LedgerTransport | null) => {
+      if (t == null) return LedgerErrors.USBNotConnected;
+
+      const uncompressedPublicKey = Point.fromHex(peer).toHex().substring(2);
+
+      var encryptResult = await encrypt(t, uncompressedPublicKey, plaintext);
+
+      return encryptResult;
+    }
+  );
+  console.log('openandEncrypt', connection);
+  return connection;
+}
+
+export async function openAndDecrypt(
+  peer: string,
+  cyphertext: string,
+  progress?: (arg0: string) => void
+): Promise<string | LedgerErrors> {
+  var connection = await managerLedgerConnection(
+    async (s: AppStatus) => {
+      progress?.(s.toString());
+    },
+    async (t: LedgerTransport | null) => {
+      if (t == null) return LedgerErrors.USBNotConnected;
+
+      const uncompressedPublicKey = Point.fromHex(peer).toHex().substring(2);
+      const result = await decrypt(t, uncompressedPublicKey, cyphertext);
+
+      return result;
+    }
+  );
+  console.log('openAndDecrypt', connection);
   return connection;
 }
 
@@ -214,10 +442,16 @@ export interface IContentScriptMessage {
   params: any;
 }
 
+export type INostrProviderRequestType =
+  | 'getPublicKey'
+  | 'signEvent'
+  | 'nip04.encrypt'
+  | 'nip04.decrypt';
+
 export interface IProviderRequestDataEvent {
   id: string;
   extension: 'ledgstr';
-  type: 'getPublicKey' | 'signEvent';
+  type: INostrProviderRequestType;
   params: any;
 }
 

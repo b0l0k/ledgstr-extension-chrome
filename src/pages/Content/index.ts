@@ -1,13 +1,17 @@
-import TransportWebHID from '@ledgerhq/hw-transport-webhid';
+import LedgerTransport from '@ledgerhq/hw-transport-webhid';
 import {
   AppState,
   IContentScriptMessage,
   IProviderRequestDataEvent,
   IResponseDataEvent,
   isMessageFromProvider,
+  openAndDecrypt,
+  openAndEncrypt,
   openAndGetPublicKey,
   openAndSign,
 } from '../../helpers/model';
+
+import { Mutex } from 'async-mutex';
 
 // inject the script that will provide window.nostr
 const script = document.createElement('script');
@@ -16,21 +20,25 @@ script.setAttribute('type', 'text/javascript');
 script.setAttribute('src', chrome.runtime.getURL('nostrProvider.bundle.js'));
 document.head.appendChild(script);
 
+const mutex = new Mutex();
+
 window.addEventListener('message', async (message: MessageEvent<any>) => {
   if (message.source !== window) return;
 
   if (isMessageFromProvider(message)) {
-    const response = await handleMessage(message);
+    await mutex.runExclusive(async () => {
+      const response = await handleMessage(message);
 
-    // return response
-    window.postMessage(
-      <IResponseDataEvent>{
-        id: message.data.id,
-        extension: 'ledgstr',
-        response,
-      },
-      message.origin
-    );
+      // return response
+      window.postMessage(
+        <IResponseDataEvent>{
+          id: message.data.id,
+          extension: 'ledgstr',
+          response,
+        },
+        message.origin
+      );
+    });
   }
 });
 
@@ -40,7 +48,7 @@ const handleMessage = async (
   try {
     switch (message.data.type) {
       case 'getPublicKey': {
-        var transport = await TransportWebHID.create();
+        var transport = await LedgerTransport.create();
         transport.close();
 
         const timeOut = setTimeout(() => {
@@ -76,7 +84,7 @@ const handleMessage = async (
         return result;
       }
       case 'signEvent': {
-        var transport = await TransportWebHID.create();
+        var transport = await LedgerTransport.create();
         transport.close();
 
         const appState: AppState =
@@ -95,6 +103,38 @@ const handleMessage = async (
           }
         );
 
+        return result;
+      }
+
+      case 'nip04.encrypt': {
+        var result = await openAndEncrypt(
+          message.data.params.peer,
+          message.data.params.plaintext,
+          async (s) => {
+            await chrome.runtime.sendMessage(<IContentScriptMessage>{
+              id: message.data.id,
+              type: 'info',
+              extension: 'ledgstr',
+              params: s,
+            });
+          }
+        );
+        return result;
+      }
+
+      case 'nip04.decrypt': {
+        var result = await openAndDecrypt(
+          message.data.params.peer,
+          message.data.params.cyphertext,
+          async (s) => {
+            await chrome.runtime.sendMessage(<IContentScriptMessage>{
+              id: message.data.id,
+              type: 'info',
+              extension: 'ledgstr',
+              params: s,
+            });
+          }
+        );
         return result;
       }
 
